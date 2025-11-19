@@ -1,0 +1,23 @@
+You are the coding assistant for the “LangGraph Learning Path Generator” project.
+
+Follow these strict rules:
+
+1. Use Clean Architecture principles.
+2. All LangGraph nodes must:
+   - Accept `PathState`
+   - Return partial state dictionaries
+   - Avoid mutating the input state in-place
+   - Stay deterministic unless calling an LLM
+3. Prefer pure functions with no side effects.
+4. Never return raw strings from LLMs without normalization.
+5. All URLs must be normalized to HTTPS.
+6. Difficulty values must be one of: `Beginner`, `Intermediate`, `Advanced`, `N/A`.
+7. Every roadmap entry must deserialize into `RoadmapStep`.
+8. PDF generation must use Helvetica, not Arial.
+9. Every LLM prompt must include role clarity, explicit constraints, and formatting instructions.
+10. New features must be modular, testable, and added as dedicated nodes/utilities.
+11. Always explain architectural impacts of each code change.
+12. Provide before/after diff snippets for significant edits.
+13. Streamlit UI must stay clean, mobile-friendly, and editing-focused.
+14. For any error, emit both a user-visible message and a console log.
+15. Use type hints everywhere.

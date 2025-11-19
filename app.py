@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from graph import app, PathState, RoadmapStep, llm 
+from graph import app, PathState, RoadmapStep, llm, USE_MOCK
 from typing import List, Tuple, Optional
 from datetime import date, timedelta
 import math
@@ -67,6 +67,19 @@ PDF_THEMES = {
 }
 
 DEFAULT_PRESET = "ML Engineer (NLP)"
+PERSONA_OPTIONS = [
+    "General Mentor",
+    "Fast-Track Coach",
+    "Academic Advisor",
+    "Career Switch Strategist",
+    "Hands-on Builder"
+]
+RESOURCE_PREFERENCES = {
+    "Mixed": "mixed",
+    "Video-first": "video",
+    "Reading / Articles": "reading",
+    "Official Docs": "docs"
+}
 
 if "target_goal" not in st.session_state:
     st.session_state["target_goal"] = PRESET_LIBRARY[DEFAULT_PRESET]["goal"]
@@ -82,6 +95,10 @@ if "pdf_theme" not in st.session_state:
     st.session_state["pdf_theme"] = "Corporate"
 if "completed_steps" not in st.session_state:
     st.session_state["completed_steps"] = {}
+if "persona_style" not in st.session_state:
+    st.session_state["persona_style"] = PERSONA_OPTIONS[0]
+if "resource_preference" not in st.session_state:
+    st.session_state["resource_preference"] = "mixed"
 
 
 def apply_preset_to_state(preset_key: str):
@@ -91,12 +108,14 @@ def apply_preset_to_state(preset_key: str):
     st.session_state["target_days"] = preset["target_days"]
     st.session_state["daily_hours"] = preset["daily_hours"]
     st.session_state["study_days_per_week"] = preset["study_days_per_week"]
+    st.session_state["persona_style"] = PERSONA_OPTIONS[0]
+    st.session_state["resource_preference"] = "mixed"
 
 # --- Helper Functions for Enhancements ---
 
-def get_graph_image_data(graph_app, max_retries: int = 5, retry_delay: float = 2.0):
-    """Generates the LangGraph diagram as PNG bytes with retries and a Pyppeteer fallback."""
-    graph = graph_app.get_graph()
+@st.cache_data(show_spinner=False, ttl=3600)
+def _cached_graph_image(max_retries: int, retry_delay: float):
+    graph = app.get_graph()
     last_error = None
     for attempt in range(max_retries):
         try:
@@ -125,6 +144,10 @@ def get_graph_image_data(graph_app, max_retries: int = 5, retry_delay: float = 2
         st.error(f"Could not generate LangGraph diagram. Last error: {fallback_error or last_error}")
         return None
 
+def get_graph_image_data(graph_app=None, max_retries: int = 5, retry_delay: float = 2.0):
+    """Wrapper to return cached LangGraph diagram bytes."""
+    return _cached_graph_image(max_retries, retry_delay)
+
 def generate_pdf(
     roadmap_rows: List[dict], 
     goal: str, 
@@ -138,10 +161,10 @@ def generate_pdf(
     palette = PDF_THEMES.get(theme, PDF_THEMES["Corporate"])
     
     # Title
-    pdf.set_font("Arial", "B", 18)
+    pdf.set_font("Helvetica", "B", 18)
     pdf.set_text_color(*palette["primary"])
     pdf.cell(0, 10, "Personalized Learning Roadmap", 0, 1, "C")
-    pdf.set_font("Arial", "", 12)
+    pdf.set_font("Helvetica", "", 12)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 7, f"Goal: {goal}", 0, 1, "C")
     pdf.cell(0, 5, f"Starting Skills: {', '.join(skills)}", 0, 1, "C")
@@ -156,7 +179,7 @@ def generate_pdf(
     pdf.ln(10)
 
     # Table Header
-    pdf.set_font("Arial", "B", 9)
+    pdf.set_font("Helvetica", "B", 9)
     pdf.set_fill_color(*palette["table_fill"])
     col_widths = [55, 18, 75, 20, 22] # Total 190mm width
     
@@ -167,13 +190,13 @@ def generate_pdf(
     pdf.cell(col_widths[4], 7, "Confidence", 1, 1, "C", 1)
 
     # Table Rows
-    pdf.set_font("Arial", "", 8)
+    pdf.set_font("Helvetica", "", 8)
     pdf.set_auto_page_break(auto=True, margin=12) # Auto page break
     
     for step in roadmap_rows:
         x = pdf.get_x()
         y = pdf.get_y()
-        max_height = 5
+        min_height = 5
 
         topic_label = step['topic']
         if step['is_high_leverage']:
@@ -185,7 +208,9 @@ def generate_pdf(
         h1 = pdf.get_y() - y
 
         pdf.set_xy(x + col_widths[0], y)
-        pdf.cell(col_widths[1], max_height, f"{step['estimated_time_hours']}h", 1, 0, "C") 
+        # row height determined after rendering resource column
+        temp_y = pdf.get_y()
+        pdf.cell(col_widths[1], min_height, f"{step['estimated_time_hours']}h", 1, 0, "C") 
         
         pdf.set_xy(x + col_widths[0] + col_widths[1], y)
         resource_text = step['resource']
@@ -194,17 +219,22 @@ def generate_pdf(
         pdf.multi_cell(col_widths[2], 5, resource_text, 1, "L", 0) 
         h2 = pdf.get_y() - y
 
+        row_height = max(h1, h2, min_height)
+
+        pdf.set_xy(x + col_widths[0], y)
+        pdf.cell(col_widths[1], row_height, f"{step['estimated_time_hours']}h", 1, 0, "C") 
+
         pdf.set_xy(x + col_widths[0] + col_widths[1] + col_widths[2], y)
-        pdf.cell(col_widths[3], max_height, step['difficulty'], 1, 0, "C")
+        pdf.cell(col_widths[3], row_height, step['difficulty'], 1, 0, "C")
 
         pdf.set_xy(x + sum(col_widths[:4]), y)
-        pdf.cell(col_widths[4], max_height, f"{step['confidence']}%", 1, 0, "C")
+        pdf.cell(col_widths[4], row_height, f"{step['confidence']}%", 1, 0, "C")
 
-        pdf.set_y(y + max(h1, h2, max_height))
+        pdf.set_y(y + row_height)
         pdf.ln(0)
 
     pdf.ln(6)
-    pdf.set_font("Arial", "B", 10)
+    pdf.set_font("Helvetica", "B", 10)
     if schedule_summary['on_track']:
         pdf.multi_cell(
             0, 
@@ -228,7 +258,10 @@ def generate_pdf(
         with open(temp_path, "rb") as pdf_file:
             pdf_bytes = pdf_file.read()
     finally:
-        os.remove(temp_path)
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
     return pdf_bytes
 
 
@@ -401,7 +434,10 @@ def run_cached_workflow(
     daily_hours: int,
     study_days_per_week: int,
     target_days: int,
-    weekly_hours: int
+    weekly_hours: int,
+    persona_style: str,
+    resource_preference: str,
+    use_mock: bool
 ) -> dict:
     """Runs the LangGraph workflow with caching so repeated inputs are instant."""
     initial_state: PathState = {
@@ -411,9 +447,12 @@ def run_cached_workflow(
         "daily_hours": daily_hours,
         "study_days_per_week": study_days_per_week,
         "target_completion_days": target_days,
+        "persona_style": persona_style,
+        "resource_preference": resource_preference,
         "learning_path": [],
         "raw_topic_list": []
     }
+    # use_mock included to differentiate cache keys even if state identical
     return app.invoke(initial_state)
 
 
@@ -458,8 +497,11 @@ st.set_page_config(
 st.title("🧠 AI-Powered Personalized Learning Path Generator")
 st.markdown("Generates a structured roadmap using **Gemini 2.5 Flash** and a multi-step reasoning workflow orchestrated by **LangGraph**.")
 
-if not llm:
+LLM_READY = llm is not None
+if not LLM_READY and not USE_MOCK:
     st.error("🚨 **Configuration Error:** The Gemini LLM is not initialized. Please ensure your `GEMINI_API_KEY` environment variable is set. **This is crucial for Hugging Face deployment.**")
+elif USE_MOCK and not LLM_READY:
+    st.info("Running in mock mode (USE_MOCK=TRUE). Outputs are deterministic samples for local demos.")
 
 # --- Sidebar Inputs ---
 with st.sidebar:
@@ -510,18 +552,37 @@ with st.sidebar:
     weekly_hours = daily_hours * study_days_per_week
     st.caption(f"≈ {weekly_hours} hours/week available ({daily_hours}h × {study_days_per_week} days)")
 
+    persona_style = st.selectbox(
+        "Mentor Persona",
+        PERSONA_OPTIONS,
+        key="persona_style",
+        help="Tailors the tone of the roadmap (coach vs academic vs builder)."
+    )
+
+    resource_labels = list(RESOURCE_PREFERENCES.keys())
+    current_label = next(
+        (label for label, slug in RESOURCE_PREFERENCES.items() if slug == st.session_state.get("resource_preference")),
+        resource_labels[0]
+    )
+    resource_preference_label = st.selectbox(
+        "Preferred Resource Type",
+        resource_labels,
+        index=resource_labels.index(current_label)
+    )
+    st.session_state["resource_preference"] = RESOURCE_PREFERENCES[resource_preference_label]
+
     pdf_theme_choice = st.selectbox(
         "PDF Theme",
         list(PDF_THEMES.keys()),
         key="pdf_theme"
     )
     
-    generate_button = st.button("🚀 Generate Roadmap", type="primary", disabled=not llm)
+    generate_button = st.button("🚀 Generate Roadmap", type="primary", disabled=not (LLM_READY or USE_MOCK))
     
     st.markdown("---")
     # LangGraph Visualization added to the sidebar for a continuous portfolio pop
     st.subheader("LangGraph Workflow")
-    graph_img = get_graph_image_data(app)
+    graph_img = get_graph_image_data()
     if graph_img:
         st.image(graph_img, caption="LangGraph State Machine Flow", use_column_width=True)
     
@@ -538,7 +599,7 @@ with st.sidebar:
     st.caption("Caching enabled: rerunning with the same inputs returns the saved result instantly.")
 
 # --- Main Area Output ---
-if generate_button and llm:
+if generate_button and (LLM_READY or USE_MOCK):
     if not target_goal or not current_skills_input:
         st.error("Please enter a Target Goal and your Current Skills.")
         st.stop()
@@ -559,7 +620,10 @@ if generate_button and llm:
                 daily_hours=daily_hours,
                 study_days_per_week=study_days_per_week,
                 target_days=target_days,
-                weekly_hours=weekly_hours
+                weekly_hours=weekly_hours,
+                persona_style=persona_style,
+                resource_preference=st.session_state["resource_preference"],
+                use_mock=USE_MOCK or not LLM_READY
             )
         topics_needed = final_state.get('raw_topic_list', [])
         st.success(f"1. **Skill Gap Analysis** complete. Identified {len(topics_needed)} topics.")
