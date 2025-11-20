@@ -5,7 +5,6 @@ from typing import List, Tuple, Optional
 from datetime import date, timedelta
 import math
 import uuid
-import tempfile
 import os
 import re
 import time
@@ -251,18 +250,12 @@ def generate_pdf(
             f"{schedule_summary['study_days_per_week']} days to hit the {schedule_summary['target_days']}-day goal."
         )
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-        temp_path = tmp_file.name
-    try:
-        pdf.output(temp_path)
-        with open(temp_path, "rb") as pdf_file:
-            pdf_bytes = pdf_file.read()
-    finally:
-        try:
-            os.remove(temp_path)
-        except OSError:
-            pass
-    return pdf_bytes
+    pdf_output = pdf.output(dest="S")
+    if isinstance(pdf_output, (bytes, bytearray)):
+        return bytes(pdf_output)
+    if isinstance(pdf_output, str):
+        return pdf_output.encode("latin1", errors="ignore")
+    raise ValueError("Unexpected PDF output type")
 
 
 def strip_high_leverage_tag(topic: str) -> Tuple[str, bool]:
